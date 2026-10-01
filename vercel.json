@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://y97wg81rj4kp-production-6gm72nlr.australia-southeast1.suga.run/api/:path*"
+    }
+  ]
+}
