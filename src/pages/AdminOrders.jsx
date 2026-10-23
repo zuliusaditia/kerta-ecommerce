@@ -8,6 +8,9 @@ export default function AdminOrders({ orders, loading, onUpdate }) {
   const [updating, setUpdating] = useState(null)
   const [shipping, setShipping] = useState(null)
   const [shipError, setShipError] = useState({})
+  
+  // State buat nyimpen jadwal pickup manual (khusus SPX & AnterAja)
+  const [pickupInputs, setPickupInputs] = useState({})
 
   // ============================================
   // FILTER + SEARCH
@@ -38,6 +41,19 @@ export default function AdminOrders({ orders, loading, onUpdate }) {
   }
 
   // ============================================
+  // HANDLE INPUT JADWAL PICKUP
+  // ============================================
+  const handlePickupChange = (orderCode, field, value) => {
+    setPickupInputs((prev) => ({
+      ...prev,
+      [orderCode]: {
+        ...(prev[orderCode] || {}),
+        [field]: value,
+      },
+    }))
+  }
+
+  // ============================================
   // HANDLE PROSES PESANAN (auto-create ke Mengantar)
   // ============================================
   const handleShipOrder = async (orderCode) => {
@@ -45,9 +61,16 @@ export default function AdminOrders({ orders, loading, onUpdate }) {
     setShipError((prev) => ({ ...prev, [orderCode]: '' }))
 
     try {
+      // Ambil inputan jadwal dari state (kalau ada)
+      const currentPickup = pickupInputs[orderCode] || {}
+
       const res = await fetch(`/api/admin/orders/${orderCode}/ship`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pickup_date: currentPickup.date || null,
+          pickup_time: currentPickup.time || null,
+        }),
       })
 
       const data = await res.json()
@@ -185,167 +208,228 @@ export default function AdminOrders({ orders, loading, onUpdate }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredOrders.map((order) => (
-                  <tr key={order.order_code} className="border-b border-black/5 hover:bg-black/[0.02] transition align-top">
-                    <td className="px-5 py-4">
-                      <p className="font-bold tracking-wide text-xs">{order.order_code}</p>
-                      <p className="text-[10px] opacity-50 mt-0.5">{order.payment_method || 'transfer'}</p>
-                    </td>
-                    <td className="px-5 py-4">
-                      <p className="font-bold text-sm">{order.customer_name}</p>
-                      <p className="text-[10px] opacity-60 mt-0.5">{order.customer_phone}</p>
-                    </td>
-                    <td className="px-5 py-4 font-black">
-                      Rp {order.total.toLocaleString('id-ID')}
-                    </td>
-                    <td className="px-5 py-4">
-                      <select
-                        value={order.status}
-                        onChange={(e) => handleStatusChange(order.order_code, e.target.value)}
-                        disabled={updating === order.order_code}
-                        className="text-[10px] font-bold tracking-widest uppercase border border-black/20 px-2 py-1.5 focus:outline-none focus:border-black disabled:opacity-50 cursor-pointer"
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="shipped">Shipped</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
-                    </td>
-                    <td className="px-5 py-4">
-                      {order.status === 'shipped' || order.status === 'completed' ? (
-                        order.tracking_number ? (
-                          <div className="text-xs">
-                            <p className="font-bold uppercase">{order.courier_code}</p>
-                            <p className="font-mono opacity-60">{order.tracking_number}</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1.5 min-w-[180px]">
-                            <div className="text-[10px] font-bold tracking-widest uppercase opacity-50 bg-black/5 px-2 py-1">
-                              {order.courier_name || order.courier_code || 'Kurir'}
-                              {order.courier_service && ` — ${order.courier_service}`}
+                {filteredOrders.map((order) => {
+                  // Cek apakah kurir ini butuh jadwal pickup
+                  const needsPickup = ['spx', 'anteraja'].includes(order.courier_code)
+
+                  return (
+                    <tr key={order.order_code} className="border-b border-black/5 hover:bg-black/[0.02] transition align-top">
+                      <td className="px-5 py-4">
+                        <p className="font-bold tracking-wide text-xs">{order.order_code}</p>
+                        <p className="text-[10px] opacity-50 mt-0.5">{order.payment_method || 'transfer'}</p>
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="font-bold text-sm">{order.customer_name}</p>
+                        <p className="text-[10px] opacity-60 mt-0.5">{order.customer_phone}</p>
+                      </td>
+                      <td className="px-5 py-4 font-black">
+                        Rp {order.total.toLocaleString('id-ID')}
+                      </td>
+                      <td className="px-5 py-4">
+                        <select
+                          value={order.status}
+                          onChange={(e) => handleStatusChange(order.order_code, e.target.value)}
+                          disabled={updating === order.order_code}
+                          className="text-[10px] font-bold tracking-widest uppercase border border-black/20 px-2 py-1.5 focus:outline-none focus:border-black disabled:opacity-50 cursor-pointer"
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="shipped">Shipped</option>
+                          <option value="completed">Completed</option>
+                          <option value="cancelled">Cancelled</option>
+                        </select>
+                      </td>
+                      <td className="px-5 py-4">
+                        {order.status === 'shipped' || order.status === 'completed' ? (
+                          order.tracking_number ? (
+                            <div className="text-xs">
+                              <p className="font-bold uppercase">{order.courier_code}</p>
+                              <p className="font-mono opacity-60">{order.tracking_number}</p>
                             </div>
-                            <button
-                              onClick={() => handleShipOrder(order.order_code)}
-                              disabled={shipping === order.order_code}
-                              className="w-full text-[10px] font-bold tracking-widest uppercase bg-black text-white px-3 py-1.5 hover:bg-gray-800 transition disabled:opacity-50"
-                            >
-                              {shipping === order.order_code ? 'Memproses...' : 'Proses Pesanan'}
-                            </button>
-                            <p className="text-[9px] opacity-40 text-center">
-                              Nomor resi otomatis
-                            </p>
-                            {shipError[order.order_code] && (
-                              <p className="text-[9px] text-red-600 font-bold text-center">
-                                {shipError[order.order_code]}
-                              </p>
-                            )}
-                          </div>
-                        )
-                      ) : (
-                        <span className="text-[10px] opacity-40">—</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 text-xs opacity-60 whitespace-nowrap">
-                      {new Date(order.created_at).toLocaleDateString('id-ID', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <Link
-                        to={`/order/${order.order_code}`}
-                        className="text-[10px] font-bold tracking-widest uppercase underline hover:opacity-60 whitespace-nowrap"
-                      >
-                        Detail
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                          ) : (
+                            <div className="space-y-2 min-w-[200px]">
+                              <div className="text-[10px] font-bold tracking-widest uppercase opacity-50 bg-black/5 px-2 py-1">
+                                {order.courier_name || order.courier_code || 'Kurir'}
+                              </div>
+                              
+                              {/* FORM PICKUP KHUSUS SPX / ANTERAJA */}
+                              {needsPickup && (
+                                <div className="flex flex-col gap-1.5 bg-blue-50/50 p-2 border border-blue-100">
+                                  <label className="text-[9px] font-bold text-blue-800 uppercase tracking-widest">Jadwal Pickup</label>
+                                  <input 
+                                    type="date" 
+                                    className="text-xs border border-black/20 px-2 py-1.5 w-full focus:outline-none focus:border-black"
+                                    onChange={(e) => handlePickupChange(order.order_code, 'date', e.target.value)}
+                                  />
+                                  <select 
+                                    className="text-xs border border-black/20 px-2 py-1.5 w-full focus:outline-none focus:border-black"
+                                    onChange={(e) => handlePickupChange(order.order_code, 'time', e.target.value)}
+                                    defaultValue="14:00"
+                                  >
+                                    <option value="14:00">14:00</option>
+                                    <option value="15:00">15:00</option>
+                                    <option value="16:00">16:00</option>
+                                    <option value="17:00">17:00</option>
+                                    <option value="18:00">18:00</option>
+                                    <option value="19:00">19:00</option>
+                                    <option value="20:00">20:00</option>
+                                    <option value="21:00">21:00</option>
+                                    <option value="22:00">22:00</option>
+                                  </select>
+                                </div>
+                              )}
+
+                              <button
+                                onClick={() => handleShipOrder(order.order_code)}
+                                disabled={shipping === order.order_code}
+                                className="w-full text-[10px] font-bold tracking-widest uppercase bg-black text-white px-3 py-2 hover:bg-gray-800 transition disabled:opacity-50"
+                              >
+                                {shipping === order.order_code ? 'Memproses...' : 'Proses Pesanan'}
+                              </button>
+                              {shipError[order.order_code] && (
+                                <p className="text-[9px] text-red-600 font-bold text-center leading-tight">
+                                  {shipError[order.order_code]}
+                                </p>
+                              )}
+                            </div>
+                          )
+                        ) : (
+                          <span className="text-[10px] opacity-40">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-xs opacity-60 whitespace-nowrap">
+                        {new Date(order.created_at).toLocaleDateString('id-ID', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <Link
+                          to={`/order/${order.order_code}`}
+                          className="text-[10px] font-bold tracking-widest uppercase underline hover:opacity-60 whitespace-nowrap"
+                        >
+                          Detail
+                        </Link>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
 
           {/* MOBILE CARDS */}
           <div className="md:hidden space-y-3">
-            {filteredOrders.map((order) => (
-              <div key={order.order_code} className="border border-black/10 p-4">
-                <div className="flex justify-between items-start mb-3 pb-3 border-b border-black/10">
-                  <div>
-                    <p className="font-bold text-xs tracking-wide">{order.order_code}</p>
-                    <p className="text-[10px] opacity-50 mt-0.5">
-                      {new Date(order.created_at).toLocaleDateString('id-ID', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </p>
+            {filteredOrders.map((order) => {
+              const needsPickup = ['spx', 'anteraja'].includes(order.courier_code)
+
+              return (
+                <div key={order.order_code} className="border border-black/10 p-4">
+                  <div className="flex justify-between items-start mb-3 pb-3 border-b border-black/10">
+                    <div>
+                      <p className="font-bold text-xs tracking-wide">{order.order_code}</p>
+                      <p className="text-[10px] opacity-50 mt-0.5">
+                        {new Date(order.created_at).toLocaleDateString('id-ID', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </p>
+                    </div>
+                    <span className="font-black text-sm">
+                      Rp {order.total.toLocaleString('id-ID')}
+                    </span>
                   </div>
-                  <span className="font-black text-sm">
-                    Rp {order.total.toLocaleString('id-ID')}
-                  </span>
-                </div>
 
-                <div className="mb-3">
-                  <p className="text-[10px] font-bold tracking-widest uppercase opacity-50 mb-1">Customer</p>
-                  <p className="text-sm font-bold">{order.customer_name}</p>
-                  <p className="text-[10px] opacity-60">{order.customer_phone}</p>
-                </div>
-
-                <div className="mb-3">
-                  <p className="text-[10px] font-bold tracking-widest uppercase opacity-50 mb-1.5">Status</p>
-                  <select
-                    value={order.status}
-                    onChange={(e) => handleStatusChange(order.order_code, e.target.value)}
-                    disabled={updating === order.order_code}
-                    className="w-full text-[10px] font-bold tracking-widest uppercase border border-black/20 px-3 py-2 focus:outline-none focus:border-black disabled:opacity-50"
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="shipped">Shipped</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                </div>
-
-                {(order.status === 'shipped' || order.status === 'completed') && (
                   <div className="mb-3">
-                    <p className="text-[10px] font-bold tracking-widest uppercase opacity-50 mb-1.5">Resi</p>
-                    {order.tracking_number ? (
-                      <div className="text-xs bg-black/5 p-3">
-                        <p className="font-bold uppercase">{order.courier_code}</p>
-                        <p className="font-mono opacity-60 mt-0.5">{order.tracking_number}</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="text-[10px] font-bold tracking-widest uppercase opacity-50 bg-black/5 px-3 py-2">
-                          Kurir: {order.courier_name || order.courier_code}
-                          {order.courier_service && ` — ${order.courier_service}`}
-                        </div>
-                        <button
-                          onClick={() => handleShipOrder(order.order_code)}
-                          disabled={shipping === order.order_code}
-                          className="w-full text-[10px] font-bold tracking-widest uppercase bg-black text-white px-3 py-2 hover:bg-gray-800 transition disabled:opacity-50"
-                        >
-                          {shipping === order.order_code ? 'Memproses...' : 'Proses Pesanan'}
-                        </button>
-                        {shipError[order.order_code] && (
-                          <p className="text-[9px] text-red-600 font-bold text-center">
-                            {shipError[order.order_code]}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                    <p className="text-[10px] font-bold tracking-widest uppercase opacity-50 mb-1">Customer</p>
+                    <p className="text-sm font-bold">{order.customer_name}</p>
+                    <p className="text-[10px] opacity-60">{order.customer_phone}</p>
                   </div>
-                )}
 
-                <Link
-                  to={`/order/${order.order_code}`}
-                  className="block w-full text-center text-[10px] font-bold tracking-widest uppercase border border-black px-4 py-2 hover:bg-black hover:text-white transition"
-                >
-                  Lihat Detail
-                </Link>
-              </div>
-            ))}
+                  <div className="mb-3">
+                    <p className="text-[10px] font-bold tracking-widest uppercase opacity-50 mb-1.5">Status</p>
+                    <select
+                      value={order.status}
+                      onChange={(e) => handleStatusChange(order.order_code, e.target.value)}
+                      disabled={updating === order.order_code}
+                      className="w-full text-[10px] font-bold tracking-widest uppercase border border-black/20 px-3 py-2 focus:outline-none focus:border-black disabled:opacity-50"
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="shipped">Shipped</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
+
+                  {(order.status === 'shipped' || order.status === 'completed') && (
+                    <div className="mb-3">
+                      <p className="text-[10px] font-bold tracking-widest uppercase opacity-50 mb-1.5">Resi</p>
+                      {order.tracking_number ? (
+                        <div className="text-xs bg-black/5 p-3">
+                          <p className="font-bold uppercase">{order.courier_code}</p>
+                          <p className="font-mono opacity-60 mt-0.5">{order.tracking_number}</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="text-[10px] font-bold tracking-widest uppercase opacity-50 bg-black/5 px-3 py-2">
+                            Kurir: {order.courier_name || order.courier_code}
+                            {order.courier_service && ` — ${order.courier_service}`}
+                          </div>
+                          
+                          {/* FORM PICKUP MOBILE */}
+                          {needsPickup && (
+                            <div className="flex flex-col gap-1.5 bg-blue-50/50 p-2 border border-blue-100">
+                              <label className="text-[9px] font-bold text-blue-800 uppercase tracking-widest">Jadwal Pickup</label>
+                              <input 
+                                type="date" 
+                                className="text-xs border border-black/20 px-2 py-1.5 w-full focus:outline-none focus:border-black"
+                                onChange={(e) => handlePickupChange(order.order_code, 'date', e.target.value)}
+                              />
+                              <select 
+                                className="text-xs border border-black/20 px-2 py-1.5 w-full focus:outline-none focus:border-black"
+                                onChange={(e) => handlePickupChange(order.order_code, 'time', e.target.value)}
+                                defaultValue="14:00"
+                              >
+                                <option value="14:00">14:00</option>
+                                <option value="15:00">15:00</option>
+                                <option value="16:00">16:00</option>
+                                <option value="17:00">17:00</option>
+                                <option value="18:00">18:00</option>
+                                <option value="19:00">19:00</option>
+                                <option value="20:00">20:00</option>
+                                <option value="21:00">21:00</option>
+                                <option value="22:00">22:00</option>
+                              </select>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => handleShipOrder(order.order_code)}
+                            disabled={shipping === order.order_code}
+                            className="w-full text-[10px] font-bold tracking-widest uppercase bg-black text-white px-3 py-2 hover:bg-gray-800 transition disabled:opacity-50"
+                          >
+                            {shipping === order.order_code ? 'Memproses...' : 'Proses Pesanan'}
+                          </button>
+                          {shipError[order.order_code] && (
+                            <p className="text-[9px] text-red-600 font-bold text-center">
+                              {shipError[order.order_code]}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <Link
+                    to={`/order/${order.order_code}`}
+                    className="block w-full text-center text-[10px] font-bold tracking-widest uppercase border border-black px-4 py-2 hover:bg-black hover:text-white transition"
+                  >
+                    Lihat Detail
+                  </Link>
+                </div>
+              )
+            })}
           </div>
         </>
       )}

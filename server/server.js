@@ -559,6 +559,8 @@ app.patch('/api/orders/:code/status', async (req, res) => {
 app.post('/api/admin/orders/:code/ship', async (req, res) => {
   try {
     const { code } = req.params
+    // Tangkap inputan dari frontend
+    const { pickup_date, pickup_time } = req.body 
 
     const [order] = await sql`SELECT * FROM orders WHERE order_code = ${code}`
     if (!order) return res.status(404).json({ error: 'Order tidak ditemukan' })
@@ -581,29 +583,57 @@ app.post('/api/admin/orders/:code/ship', async (req, res) => {
     }
 
     const totalQty = items.reduce((sum, i) => sum + i.qty, 0)
-    const totalWeight = totalQty // 1 kg per item
+    const totalWeight = totalQty 
 
     // ============================================
-    // LOGIKA PICKUP (SPX & AnterAja wajib scheduledPickup)
+    // LOGIKA PICKUP (SPX & AnterAja)
     // ============================================
     const needsPickup = ['spx', 'anteraja'].includes(order.courier_code)
-    
-    // KITA PAKAI ENV VARIABLE UNTUK TIME_ID
-    // Kalau error lagi, nanti kita tinggal ganti di .env tanpa ubah kode
-    const defaultTimeId = process.env.MENGANTAR_TIME_ID || '1' 
+    let pickupData = {}
 
-    const pickupData = needsPickup
-      ? {
-          type: 'scheduledPickup',
-          volume: 'volumeMotor',
+    if (needsPickup) {
+      // Fallback kalau admin gak milih tanggal/jam
+      let finalDate = pickup_date
+      let finalTime = pickup_time || '14:00'
+
+      if (!finalDate) {
+        const tomorrow = new Date()
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        const mm = String(tomorrow.getMonth() + 1).padStart(2, '0')
+        const dd = String(tomorrow.getDate()).padStart(2, '0')
+        const yyyy = tomorrow.getFullYear()
+        finalDate = `${mm}-${dd}-${yyyy}`
+      }
+
+      console.log(`⏳ Requesting time_id for date: ${finalDate} at ${finalTime}...`)
+
+      const timeResponse = await mengantarRequest(`/api/public/${MENGANTAR_KEY}/time`, {
+        method: 'POST',
+        body: JSON.stringify({
           address_id: MENGANTAR_PICKUP_ADDRESS_ID,
-          time_id: defaultTimeId, 
-        }
-      : {
-          type: 'dropOff',
-          volume: 'volumeMotor',
-          address_id: MENGANTAR_PICKUP_ADDRESS_ID,
-        }
+          date: finalDate, // <--- Pakai dari admin
+          time: finalTime  // <--- Pakai dari admin
+        })
+      })
+
+      console.log('✅ Time ID Response:', JSON.stringify(timeResponse))
+
+      const validTimeId = timeResponse.data?._id || timeResponse.data?.id
+      if (!validTimeId) throw new Error('Gagal mendapatkan time_id dari Mengantar')
+
+      pickupData = {
+        type: 'scheduledPickup',
+        volume: 'volumeMotor',
+        address_id: MENGANTAR_PICKUP_ADDRESS_ID,
+        time_id: validTimeId,
+      }
+    } else {
+      pickupData = {
+        type: 'dropOff',
+        volume: 'volumeMotor',
+        address_id: MENGANTAR_PICKUP_ADDRESS_ID,
+      }
+    }
 
     const payload = {
       courier: cfg.mengantarKey,
@@ -633,8 +663,7 @@ app.post('/api/admin/orders/:code/ship', async (req, res) => {
       ],
     }
 
-    // Log payload biar kalau error bisa dicek
-    console.log('📤 Sending to Mengantar (SPX/Pickup):')
+    console.log('📤 Sending to Mengantar (Create Order):')
     console.log(JSON.stringify(payload, null, 2))
 
     const data = await mengantarRequest(`/api/public/${MENGANTAR_KEY}/order`, {
