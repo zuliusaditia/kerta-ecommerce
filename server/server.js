@@ -581,18 +581,23 @@ app.post('/api/admin/orders/:code/ship', async (req, res) => {
     }
 
     const totalQty = items.reduce((sum, i) => sum + i.qty, 0)
-    const totalWeight = totalQty // 1 kg per item, biar match sum(qty × weight)
+    const totalWeight = totalQty // 1 kg per item
 
-     // Cek apakah kurir ini butuh pickup (SPX & AnterAja wajib pickup)
+    // ============================================
+    // LOGIKA PICKUP (SPX & AnterAja wajib scheduledPickup)
+    // ============================================
     const needsPickup = ['spx', 'anteraja'].includes(order.courier_code)
+    
+    // KITA PAKAI ENV VARIABLE UNTUK TIME_ID
+    // Kalau error lagi, nanti kita tinggal ganti di .env tanpa ubah kode
+    const defaultTimeId = process.env.MENGANTAR_TIME_ID || '1' 
 
-    // Siapkan data pickup sesuai kebutuhan kurir
     const pickupData = needsPickup
       ? {
           type: 'scheduledPickup',
           volume: 'volumeMotor',
           address_id: MENGANTAR_PICKUP_ADDRESS_ID,
-          time_id: '1', // SPX butuh time_id (kita pakai slot 1)
+          time_id: defaultTimeId, 
         }
       : {
           type: 'dropOff',
@@ -602,7 +607,7 @@ app.post('/api/admin/orders/:code/ship', async (req, res) => {
 
     const payload = {
       courier: cfg.mengantarKey,
-      pickup: pickupData, // Gunakan data yang sudah disiapkan
+      pickup: pickupData, 
       orders: [
         {
           assignee: '',
@@ -628,7 +633,8 @@ app.post('/api/admin/orders/:code/ship', async (req, res) => {
       ],
     }
 
-    console.log('📤 Sending to Mengantar:')
+    // Log payload biar kalau error bisa dicek
+    console.log('📤 Sending to Mengantar (SPX/Pickup):')
     console.log(JSON.stringify(payload, null, 2))
 
     const data = await mengantarRequest(`/api/public/${MENGANTAR_KEY}/order`, {
