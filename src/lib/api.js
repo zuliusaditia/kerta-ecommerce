@@ -45,6 +45,13 @@ export const api = {
     request(`/products/${id}`, { method: 'DELETE' }),
 
   // ============================================
+  // REVIEWS (BARU)
+  // ============================================
+  getReviews: (productId) => request(`/products/${productId}/reviews`),
+  submitReview: (data) =>
+    request('/reviews', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ============================================
   // ADMIN AUTH
   // ============================================
   adminLogin: (email, password) =>

@@ -455,7 +455,13 @@ app.get('/api/customer/orders', async (req, res) => {
 
     const ordersWithItems = await Promise.all(
       orders.map(async (order) => {
-        const items = await sql`SELECT * FROM order_items WHERE order_id = ${order.id}`
+        // UPDATE QUERY: Cek apakah produk udah di-review di order ini
+        const items = await sql`
+          SELECT oi.*, 
+            (SELECT COUNT(*) FROM reviews r WHERE r.order_id = oi.order_id AND r.product_id = oi.product_id) > 0 AS is_reviewed
+          FROM order_items oi
+          WHERE oi.order_id = ${order.id}
+        `
         return { ...order, items }
       })
     )
@@ -502,6 +508,25 @@ app.post('/api/orders', async (req, res) => {
       destination_area_id,
     } = req.body
 
+    // ============================================
+    // TAMBAHAN: VALIDASI STOK
+    // ============================================
+    for (const item of items) {
+      const [product] = await sql`
+        SELECT id, name, stock FROM products WHERE id = ${item.product_id}
+      `
+      if (!product) {
+        return res.status(400).json({ 
+          error: `Produk tidak ditemukan: ${item.product_name}` 
+        })
+      }
+      if (product.stock < item.qty) {
+        return res.status(400).json({ 
+          error: `Stok "${product.name}" tidak cukup. Tersisa ${product.stock}.` 
+        })
+      }
+    }
+
     const customer = await getCustomer(req)
     const customerId =
       customer?.email === customer_email ? customer.customer_id : null
@@ -538,17 +563,73 @@ app.post('/api/orders', async (req, res) => {
   }
 })
 
+// ============================================
+//CODE STATUS UPDATE
+// ===========================================
+
 app.patch('/api/orders/:code/status', async (req, res) => {
   try {
     const { code } = req.params
     const { status } = req.body
+
+    // 1. Ambil order lama
+    const [oldOrder] = await sql`SELECT * FROM orders WHERE order_code = ${code}`
+    if (!oldOrder) return res.status(404).json({ error: 'Order tidak ditemukan' })
+
+    // 2. Ambil items buat update stok
+    const items = await sql`SELECT * FROM order_items WHERE order_id = ${oldOrder.id}`
+
+    let stockReduced = oldOrder.stock_reduced
+
+    // ============================================
+    // LOGIKA STOK & TERJUAL
+    // ============================================
+    
+    // A. Kalau baru di-shipped dan stok BELUM dikurangi -> Kurangi Stok & Tambah Terjual
+    if (status === 'shipped' && !stockReduced) {
+      for (const item of items) {
+        if (item.product_id) {
+          await sql`
+            UPDATE products 
+            SET stock = GREATEST(0, stock - ${item.qty}),
+                sold = sold + ${item.qty}
+            WHERE id = ${item.product_id}
+          `
+        }
+      }
+      stockReduced = true
+      console.log(`📦 Stock & Sold updated for order ${code}`)
+    }
+
+    // B. Kalau di-cancelled dan stok UDAH dikurangi -> Balikin Stok & Kurangi Terjual
+    if (status === 'cancelled' && stockReduced) {
+      for (const item of items) {
+        if (item.product_id) {
+          await sql`
+            UPDATE products 
+            SET stock = stock + ${item.qty},
+                sold = GREATEST(0, sold - ${item.qty})
+            WHERE id = ${item.product_id}
+          `
+        }
+      }
+      stockReduced = false
+      console.log(`↩️ Stock & Sold returned for order ${code}`)
+    }
+
+    // 3. Update status order
     const [order] = await sql`
-      UPDATE orders SET status = ${status}, updated_at = NOW()
-      WHERE order_code = ${code} RETURNING *
+      UPDATE orders SET 
+        status = ${status}, 
+        stock_reduced = ${stockReduced},
+        updated_at = NOW()
+      WHERE order_code = ${code}
+      RETURNING *
     `
-    if (!order) return res.status(404).json({ error: 'Order tidak ditemukan' })
+
     res.json(order)
   } catch (err) {
+    console.error('Update status error:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -1155,6 +1236,79 @@ app.post('/api/webhooks/mengantar', async (req, res) => {
     res.status(200).json({ success: true })
   } catch (err) {
     console.error('Webhook error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================
+// REVIEWS (RATING & ULASAN CUSTOMER)
+// ============================================
+
+// GET: Ambil semua ulasan untuk 1 produk
+app.get('/api/products/:id/reviews', async (req, res) => {
+  try {
+    const { id } = req.params
+    const reviews = await sql`
+      SELECT * FROM reviews 
+      WHERE product_id = ${id} 
+      ORDER BY created_at DESC
+    `
+    res.json(reviews)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST: Customer ngasih ulasan (Wajib order status 'completed')
+app.post('/api/reviews', async (req, res) => {
+  try {
+    const { product_id, order_id, rating, review_text } = req.body
+
+    // 1. Validasi: Pastikan order ini beneran ada dan statusnya 'completed'
+    const [order] = await sql`
+      SELECT * FROM orders WHERE id = ${order_id} AND status = 'completed'
+    `
+    if (!order) {
+      return res.status(400).json({ error: 'Order belum selesai atau tidak valid.' })
+    }
+
+    // 2. Cek apakah produk ini memang ada di dalam order tersebut
+    const [item] = await sql`
+      SELECT * FROM order_items WHERE order_id = ${order_id} AND product_id = ${product_id}
+    `
+    if (!item) {
+      return res.status(400).json({ error: 'Produk tidak ada di dalam order ini.' })
+    }
+
+    // 3. Cek biar gak double review
+    const [existing] = await sql`
+      SELECT id FROM reviews WHERE order_id = ${order_id} AND product_id = ${product_id}
+    `
+    if (existing) {
+      return res.status(400).json({ error: 'Kamu sudah memberikan ulasan untuk produk ini.' })
+    }
+
+    // 4. Simpan ulasan baru
+    const [newReview] = await sql`
+      INSERT INTO reviews (product_id, order_id, customer_name, rating, review_text)
+      VALUES (${product_id}, ${order_id}, ${order.customer_name}, ${rating}, ${review_text})
+      RETURNING *
+    `
+
+    // 5. HITUNG RATA-RATA RATING BARU UNTUK PRODUK INI
+    const [avgData] = await sql`
+      SELECT AVG(rating) as avg_rating FROM reviews WHERE product_id = ${product_id}
+    `
+    const newAvgRating = Number(avgData.avg_rating).toFixed(1) // Misal 4.5
+
+    // 6. Update rating di tabel products
+    await sql`
+      UPDATE products SET rating = ${newAvgRating} WHERE id = ${product_id}
+    `
+
+    res.status(201).json({ success: true, review: newReview, new_rating: newAvgRating })
+  } catch (err) {
+    console.error('Review error:', err)
     res.status(500).json({ error: err.message })
   }
 })
