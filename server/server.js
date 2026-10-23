@@ -583,13 +583,26 @@ app.post('/api/admin/orders/:code/ship', async (req, res) => {
     const totalQty = items.reduce((sum, i) => sum + i.qty, 0)
     const totalWeight = totalQty // 1 kg per item, biar match sum(qty × weight)
 
+     // Cek apakah kurir ini butuh pickup (SPX & AnterAja wajib pickup)
+    const needsPickup = ['spx', 'anteraja'].includes(order.courier_code)
+
+    // Siapkan data pickup sesuai kebutuhan kurir
+    const pickupData = needsPickup
+      ? {
+          type: 'scheduledPickup',
+          volume: 'volumeMotor',
+          address_id: MENGANTAR_PICKUP_ADDRESS_ID,
+          time_id: '1', // SPX butuh time_id (kita pakai slot 1)
+        }
+      : {
+          type: 'dropOff',
+          volume: 'volumeMotor',
+          address_id: MENGANTAR_PICKUP_ADDRESS_ID,
+        }
+
     const payload = {
       courier: cfg.mengantarKey,
-      pickup: {
-        type: 'dropOff',
-        volume: 'volumeMotor',
-        address_id: MENGANTAR_PICKUP_ADDRESS_ID,
-      },
+      pickup: pickupData, // Gunakan data yang sudah disiapkan
       orders: [
         {
           assignee: '',
