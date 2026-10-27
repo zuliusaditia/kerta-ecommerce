@@ -99,38 +99,51 @@ function cacheClear(pattern) {
 }
 
 // ============================================
-// MENGANTAR HELPER
+// MENGANTAR HELPER (DENGAN TIMEOUT)
 // ============================================
 async function mengantarRequest(path, options = {}) {
   const url = `${MENGANTAR_BASE}${path}`
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  })
+  
+  // REM DARURAT: Batalkan request kalau lebih dari 10 detik
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 10000)
 
-  const data = await res.json()
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    })
 
-  if (!res.ok || data.success === false) {
-    // Log full response biar bisa debug
-    console.error('🔴 Mengantar error response:')
-    console.error(JSON.stringify(data, null, 2))
+    clearTimeout(timeoutId) // Kalau sukses cepet, matikan timer
+    const data = await res.json()
 
-    // Gabungin semua detail error
-    const details = [
-      data.message,
-      ...(data.errors || []),
-      ...(data.errorsFront || []),
-    ]
-      .filter(Boolean)
-      .join(' | ')
+    if (!res.ok || data.success === false) {
+      console.error('🔴 Mengantar error response:')
+      console.error(JSON.stringify(data, null, 2))
 
-    throw new Error(details || 'Mengantar request failed')
+      const details = [
+        data.message,
+        ...(data.errors || []),
+        ...(data.errorsFront || []),
+      ]
+        .filter(Boolean)
+        .join(' | ')
+
+      throw new Error(details || 'Mengantar request failed')
+    }
+
+    return data
+  } catch (err) {
+    clearTimeout(timeoutId)
+    if (err.name === 'AbortError') {
+      throw new Error('Koneksi ke Mengantar timeout. Server mereka sedang lambat.')
+    }
+    throw err
   }
-
-  return data
 }
 
 function normalizeRates(mengantarData, activeCouriers) {
