@@ -15,23 +15,34 @@ export default function ProductDetail() {
   const [reviews, setReviews] = useState([])
 
   useEffect(() => {
-    const fetchProduct = async () => {
+    const fetchProductAndReviews = async () => {
       setLoading(true)
+      
+      // 1. Fetch Produk Dulu (Kalau ini gagal, baru anggap produk gak ada)
       try {
         const data = await api.getProduct(id)
         setProduct(data)
         analytics.productView(id)
-        
-        // Ambil data review
+      } catch (err) {
+        console.error('Error fetching product:', err)
+        setProduct(null)
+        setLoading(false)
+        return // Hentikan proses kalau produk beneran gak ada
+      }
+
+      // 2. Fetch Review secara terpisah (Kalau gagal, produk TETAP muncul)
+      try {
         const reviewData = await api.getReviews(id)
         setReviews(reviewData)
       } catch (err) {
-        console.error('Error:', err)
-        setProduct(null)
+        console.error('Error fetching reviews (backend mungkin belum ready):', err)
+        setReviews([]) // Anggap aja belum ada review
       }
+
       setLoading(false)
     }
-    fetchProduct()
+    
+    fetchProductAndReviews()
   }, [id])
 
   if (loading) return <div className="py-32 text-center text-xs font-bold uppercase opacity-50">Loading...</div>
@@ -78,6 +89,12 @@ export default function ProductDetail() {
           ) : (
             <button onClick={() => addToCart(product)} className="w-full bg-black text-white py-4 text-xs font-bold uppercase hover:bg-gray-800 transition">Add to Cart</button>
           )}
+
+          <div className="mt-8 pt-8 border-t border-black/10 text-xs font-bold tracking-widest uppercase opacity-50 space-y-2">
+            <p>✓ Free Shipping di atas Rp 500.000</p>
+            <p>✓ 100% Original Product</p>
+            <p>✓ Made in Indonesia</p>
+          </div>
         </div>
       </div>
 
@@ -95,7 +112,9 @@ export default function ProductDetail() {
                   <p className="font-bold text-sm">{rev.customer_name}</p>
                   <StarRating rating={rev.rating} size="w-3 h-3" />
                 </div>
-                <p className="text-[10px] opacity-40 mb-3">{new Date(rev.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                <p className="text-[10px] opacity-40 mb-3">
+                  {new Date(rev.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </p>
                 <p className="text-sm opacity-80 leading-relaxed">{rev.review_text || '-'}</p>
               </div>
             ))}
